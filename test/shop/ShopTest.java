@@ -5,8 +5,18 @@ import java.math.BigDecimal;
 /** No external test dependency; failures always exit nonzero. */
 public final class ShopTest {
     private static int checks;
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         Catalog catalog = new Catalog();
+        // 商品必须有真实登录销售者；测试固定商品显式创建，不污染实际商店。
+        java.nio.file.Path dir = java.nio.file.Files.createTempDirectory(java.nio.file.Path.of("build"), "shop-fixture-");
+        java.nio.file.Path file = dir.resolve("users.properties");
+        AuthService auth = new AuthService(file);
+        auth.register("fixture", "Password123".toCharArray(), Role.SELLER);
+        AuthService.Session seller = auth.login("fixture", "Password123".toCharArray());
+        catalog.add(seller, new Product("P01", "Notebook", new BigDecimal("18.00")), 1000);
+        catalog.add(seller, new Product("P02", "Pen set", new BigDecimal("12.50")), 1000);
+        java.nio.file.Files.delete(file);
+        java.nio.file.Files.delete(dir);
         Cart cart = new Cart(catalog);
         Checkout checkout = new Checkout();
         rejects(() -> checkout.quote(cart, ""));

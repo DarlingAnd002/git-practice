@@ -20,6 +20,8 @@ try {
         & $runtime -cp build shop.ShopTest
         if ($LASTEXITCODE -ne 0) { throw 'Shopping tests failed.' }
         & $runtime -cp build shop.AuthTest
+        if ($LASTEXITCODE -ne 0) { throw 'Auth tests failed.' }
+        & $runtime -cp build shop.CommerceTest
     }
     else { & $runtime -cp build shop.Main }
     if ($LASTEXITCODE -ne 0) { throw 'Java program failed.' }
