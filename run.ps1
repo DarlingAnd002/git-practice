@@ -16,7 +16,13 @@ try {
     if ($Test) { $sources += @(Get-ChildItem test -Recurse -Filter *.java | ForEach-Object FullName) }
     & $compiler --release 17 -encoding UTF-8 -d build @sources
     if ($LASTEXITCODE -ne 0) { throw 'Compilation failed. JDK 17 or newer is required.' }
-    if ($Test) { & $runtime -cp build shop.ShopTest }
+    if ($Test) {
+        & $runtime -cp build shop.ShopTest
+        if ($LASTEXITCODE -ne 0) { throw 'Shopping tests failed.' }
+        & $runtime -cp build shop.AuthTest
+        if ($LASTEXITCODE -ne 0) { throw 'Auth tests failed.' }
+        & $runtime -cp build shop.CommerceTest
+    }
     else { & $runtime -cp build shop.Main }
     if ($LASTEXITCODE -ne 0) { throw 'Java program failed.' }
 } finally { Pop-Location }
