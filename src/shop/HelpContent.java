@@ -54,6 +54,9 @@ final class HelpContent {
                 结账确认窗口可勾选“我是学生，享九折”，默认不勾选。本次购买按学生自行声明享九折，每个条目四舍五入到分后汇总。
                 (Select Student: 10% off at checkout to declare student eligibility for this purchase. Each item total is rounded to cents before summing.)
 
+                确认金额后选择扫码或测试银行卡模拟支付。只有模拟成功才生成订单；失败或取消不成交。
+                (Choose demo QR or test card payment. Only simulated success creates orders.)
+
                 结账前确认各商家小计和总金额；不同商家生成独立订单。同一商家的商品合并为一单，购买记录中可查看。
                 (Confirm seller subtotals and the total. Checkout creates one order per seller, available in Purchase history.)
                 """);

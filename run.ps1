@@ -40,6 +40,8 @@ try {
         & $runtime -cp build shop.ProductImageTest
         if ($LASTEXITCODE -ne 0) { throw 'Product image tests failed.' }
         & $runtime -cp build shop.StudentDiscountTest
+        if ($LASTEXITCODE -ne 0) { throw 'Student discount tests failed.' }
+        & $runtime -cp build shop.PaymentTest
     }
     else { & $runtime -cp build shop.Main }
     if ($LASTEXITCODE -ne 0) { throw 'Java program failed.' }

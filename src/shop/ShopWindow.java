@@ -738,13 +738,22 @@ public final class ShopWindow extends JFrame {
         JPanel confirmation = new JPanel(new BorderLayout(0, 12));confirmation.add(new JScrollPane(invoice));confirmation.add(student, BorderLayout.SOUTH);
         if (JOptionPane.showConfirmDialog(this, confirmation, "确认购买（Confirm purchase）", JOptionPane.YES_NO_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.YES_OPTION) return false;
         Checkout.Receipt quote = shown[0];
-        // 最终提交还会检查库存和报价，保存成功才扣库存并清空购物车。
+        PaymentGateway.Result payment = DemoPaymentDialog.open(KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow(), quote.total());
+        if (payment.status() == PaymentGateway.Status.CANCELLED) return false;
+        if (payment.status() == PaymentGateway.Status.FAILED) {message("模拟支付失败，未生成订单，库存和购物车保持不变。（Demo payment failed; nothing was purchased.）");return false;}
+        // 模拟成功后才提交；若保存失败，模拟支付作废，不会实际扣款。
+
         List<String> ids = purchase.lines().stream().map(line -> line.product().id()).toList();
-        List<Order> created = fromCart ? catalog.purchaseSelected(session, cart, ids, quote) : catalog.purchase(session, purchase, quote);
+        List<Order> created;
+        try {created = fromCart ? catalog.purchaseSelected(session, cart, ids, quote) : catalog.purchase(session, purchase, quote);}
+        catch (IllegalArgumentException | UncheckedIOException error) {
+            message("模拟支付已作废，未完成购买。（Demo payment voided.）\n" + error.getMessage());return false;
+        }
         refresh();
         StringBuilder result = new StringBuilder("购买成功，已按商家生成 " + created.size() + " 笔订单：\n");
         for (Order order : created) result.append("商家：").append(order.items().get(0).seller())
                 .append("  金额：").append(order.total()).append("\n订单号：").append(order.id()).append("\n");
+        result.append("\n模拟支付流水（Demo reference）：").append(payment.reference());
         message(result.toString());
         return true;
     }
