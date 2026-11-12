@@ -235,7 +235,8 @@ public final class Catalog {
     public synchronized List<Order> purchase(AuthService.Session session, Cart cart, Checkout.Receipt accepted) {
         require(session, Role.CONSUMER);
         if (!cart.belongsTo(this, session.username())) throw new IllegalArgumentException("不能结算他人的购物车。");
-        Checkout.Receipt current = new Checkout().quote(cart);
+        if (accepted == null) throw new IllegalArgumentException("请先确认结账金额。");
+        Checkout.Receipt current = new Checkout().quote(cart, accepted.student());
         if (!current.equals(accepted)) throw new IllegalArgumentException("商品价格或购物车已变化，请重新确认报价。");
         Map<String, Listing> updated = new LinkedHashMap<>(listings);
         Map<String, List<Order.Item>> bySeller = new LinkedHashMap<>();
@@ -246,7 +247,7 @@ public final class Catalog {
             updated.put(id, new Listing(old.product(), old.seller(), old.stock() - line.quantity(), old.active()));
 
             bySeller.computeIfAbsent(old.seller(), seller -> new ArrayList<>())
-                    .add(new Order.Item(old.seller(), id, line.product().name(), line.product().price(), line.quantity(), line.subtotal()));
+                    .add(new Order.Item(old.seller(), id, line.product().name(), line.product().price(), line.quantity(), Checkout.paid(line, current.student())));
         }
         // 每个商家独立订单，但所有订单和库存只提交一次。
         Instant time = Instant.now();

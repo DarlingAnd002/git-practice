@@ -51,6 +51,9 @@ final class HelpContent {
                 右侧删除移除单件，底部删除移除勾选商品。售完或下架商品保留显示并禁止购买，结账时可确认删除它们后继续；库存不足时先调整数量。
                 (Remove one item or remove selected items. Sold-out or unlisted items remain visible and cannot be purchased. Checkout can remove them after confirmation. Reduce quantities when stock is insufficient.)
 
+                结账确认窗口可勾选“我是学生，享九折”，默认不勾选。本次购买按学生自行声明享九折，每个条目四舍五入到分后汇总。
+                (Select Student: 10% off at checkout to declare student eligibility for this purchase. Each item total is rounded to cents before summing.)
+
                 结账前确认各商家小计和总金额；不同商家生成独立订单。同一商家的商品合并为一单，购买记录中可查看。
                 (Confirm seller subtotals and the total. Checkout creates one order per seller, available in Purchase history.)
                 """);

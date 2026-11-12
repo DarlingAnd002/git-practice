@@ -499,7 +499,7 @@ public final class ShopWindow extends JFrame {
         scroll.setPreferredSize(new Dimension(750, 280));
         JPanel panel = new JPanel(new BorderLayout(8, 8));
         JPanel heading = new JPanel(new BorderLayout(12, 0));
-        heading.add(new JLabel("订单 " + order.id() + "  买家：" + order.buyer() + "  合计：" + order.total()));
+        heading.add(new JLabel("订单 " + order.id() + "  买家：" + order.buyer() + "  优惠（Discount）：" + order.subtotal().subtract(order.total()) + "  实付（Paid）：" + order.total()));
         heading.add(helpButton(() -> showHelp(HelpContent.dialog("订单详情（Order details）"))), BorderLayout.EAST);panel.add(heading, BorderLayout.NORTH);
         panel.add(scroll);
         JOptionPane.showMessageDialog(this, panel, "订单详情（Order details）", JOptionPane.PLAIN_MESSAGE);
@@ -728,14 +728,16 @@ public final class ShopWindow extends JFrame {
             }
         }
         // 删除无效项后重新报价；有货但数量不足的商品仍需用户调整。
-        Checkout.Receipt quote = new Checkout().quote(purchase);
-        StringBuilder text = new StringBuilder();
-        for (Cart.Line line : quote.lines()) text.append(line.product().name()).append(" ×").append(line.quantity()).append(" = ").append(line.subtotal()).append("\n");
-        Map<String, BigDecimal> totals = new LinkedHashMap<>();
-        for (Cart.Line line : quote.lines()) totals.merge(catalog.seller(line.product().id()), line.subtotal(), BigDecimal::add);
-        text.append("\n按商家拆为 ").append(totals.size()).append(" 笔订单：\n");
-        for (var entry : totals.entrySet()) text.append(entry.getKey()).append("：").append(entry.getValue()).append(" 元\n");
-        if (!confirm(text + "\n总应付：" + quote.total() + " 元，确认购买？")) return false;
+        Checkout.Receipt[] shown = {new Checkout().quote(purchase)};
+        JCheckBox student = checkBox("我是学生，享九折（Student: 10% off）");student.setName("student-discount");
+        JTextArea invoice = new JTextArea(checkoutText(shown[0]), 15, 56);invoice.setName("checkout-invoice");
+        invoice.setEditable(false);invoice.setLineWrap(true);invoice.setWrapStyleWord(true);invoice.setCaretPosition(0);
+        student.addActionListener(event -> {
+            shown[0] = new Checkout().quote(purchase, student.isSelected());invoice.setText(checkoutText(shown[0]));invoice.setCaretPosition(0);
+        });
+        JPanel confirmation = new JPanel(new BorderLayout(0, 12));confirmation.add(new JScrollPane(invoice));confirmation.add(student, BorderLayout.SOUTH);
+        if (JOptionPane.showConfirmDialog(this, confirmation, "确认购买（Confirm purchase）", JOptionPane.YES_NO_OPTION, JOptionPane.PLAIN_MESSAGE) != JOptionPane.YES_OPTION) return false;
+        Checkout.Receipt quote = shown[0];
         // 最终提交还会检查库存和报价，保存成功才扣库存并清空购物车。
         List<String> ids = purchase.lines().stream().map(line -> line.product().id()).toList();
         List<Order> created = fromCart ? catalog.purchaseSelected(session, cart, ids, quote) : catalog.purchase(session, purchase, quote);
@@ -745,6 +747,21 @@ public final class ShopWindow extends JFrame {
                 .append("  金额：").append(order.total()).append("\n订单号：").append(order.id()).append("\n");
         message(result.toString());
         return true;
+    }
+
+    private String checkoutText(Checkout.Receipt quote) {
+        StringBuilder text = new StringBuilder();BigDecimal original = new BigDecimal("0.00");
+        Map<String, BigDecimal> totals = new LinkedHashMap<>();
+        for (Cart.Line line : quote.lines()) {
+            BigDecimal paid = Checkout.paid(line, quote.student());original = original.add(line.subtotal());
+            text.append(line.product().name()).append(" ×").append(line.quantity()).append(" = ¥").append(paid).append("\n");
+            totals.merge(catalog.seller(line.product().id()), paid, BigDecimal::add);
+        }
+        text.append("\n商家订单（Orders by seller）：\n");
+        for (var entry : totals.entrySet()) text.append(entry.getKey()).append("：¥").append(entry.getValue()).append("\n");
+        text.append("\n原价（Subtotal）：¥").append(original);
+        text.append("\n学生优惠（Student discount）：¥").append(original.subtract(quote.total()));
+        text.append("\n实付（Total）：¥").append(quote.total());return text.toString();
     }
 
     private JButton helpButton(Runnable action) {
