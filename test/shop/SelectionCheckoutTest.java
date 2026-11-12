@@ -29,7 +29,7 @@ public final class SelectionCheckoutTest {
             check(cart.lines().size() == 2 && catalog.stock(a) == 10);
             Checkout.Receipt firstQuote = quote;
             reject(() -> catalog.purchaseSelected(other, cart, List.of(a), firstQuote));
-            Order order = catalog.purchaseSelected(buyer, cart, List.of(a), quote);
+            Order order = catalog.purchaseSelected(buyer, cart, List.of(a), quote).get(0);
             check(order.items().size() == 1 && order.total().compareTo(new BigDecimal("24.00")) == 0);
             check(cart.lines().size() == 1 && cart.lines().get(0).product().id().equals(b));
             check(cart.lines().get(0).quantity() == 3 && catalog.stock(b) == 20 && catalog.stock(a) == 8);

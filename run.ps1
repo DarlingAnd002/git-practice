@@ -34,6 +34,10 @@ try {
         & $runtime -cp build shop.SelectionCheckoutTest
         if ($LASTEXITCODE -ne 0) { throw 'Selection checkout tests failed.' }
         & $runtime -cp build shop.CardActionsTest
+        if ($LASTEXITCODE -ne 0) { throw 'Card action tests failed.' }
+        & $runtime -cp build shop.MerchantOrderTest
+        if ($LASTEXITCODE -ne 0) { throw 'Merchant order tests failed.' }
+        & $runtime -cp build shop.ProductImageTest
     }
     else { & $runtime -cp build shop.Main }
     if ($LASTEXITCODE -ne 0) { throw 'Java program failed.' }

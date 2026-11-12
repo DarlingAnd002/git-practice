@@ -17,12 +17,15 @@ public final class Catalog {
     private Map<String, Listing> listings = new LinkedHashMap<>();
     private List<Order> orders = new ArrayList<>();
     private final StoreFile storage;
+    private final ProductImages images;
     public Catalog() {
         storage = null;
+        images = new ProductImages(null);
     }
 
     public Catalog(Path file) throws IOException {
         storage = new StoreFile(file);
+        images = new ProductImages(file.toAbsolutePath().getParent().resolve("images"));
         StoreFile.State state = storage.load();
         listings = new LinkedHashMap<>(state.listings());
         orders = new ArrayList<>(state.orders());
@@ -57,6 +60,22 @@ public final class Catalog {
 
     public synchronized Product find(String id) {
         return listing(id).product();
+    }
+
+    public synchronized java.awt.image.BufferedImage image(String id) {
+        listing(id);return images.get(id);
+    }
+
+    public synchronized java.awt.image.BufferedImage fullImage(String id) throws IOException {
+        listing(id);return images.original(id);
+    }
+
+    public synchronized void uploadImage(AuthService.Session session, String id, Path file) throws IOException {
+        owned(session, id);images.upload(id, file);
+    }
+
+    public synchronized void removeImage(AuthService.Session session, String id) throws IOException {
+        owned(session, id);images.remove(id);
     }
 
     public synchronized String seller(String id) {
@@ -213,36 +232,42 @@ public final class Catalog {
         return List.copyOf(result);
     }
 
-    public synchronized Order purchase(AuthService.Session session, Cart cart, Checkout.Receipt accepted) {
+    public synchronized List<Order> purchase(AuthService.Session session, Cart cart, Checkout.Receipt accepted) {
         require(session, Role.CONSUMER);
         if (!cart.belongsTo(this, session.username())) throw new IllegalArgumentException("不能结算他人的购物车。");
         Checkout.Receipt current = new Checkout().quote(cart);
         if (!current.equals(accepted)) throw new IllegalArgumentException("商品价格或购物车已变化，请重新确认报价。");
         Map<String, Listing> updated = new LinkedHashMap<>(listings);
-        List<Order.Item> items = new ArrayList<>();
+        Map<String, List<Order.Item>> bySeller = new LinkedHashMap<>();
         for (Cart.Line line : current.lines()) {
             String id = line.product().id();
             checkStock(id, line.quantity());
             Listing old = listing(id);
             updated.put(id, new Listing(old.product(), old.seller(), old.stock() - line.quantity(), old.active()));
 
-            items.add(new Order.Item(old.seller(), id, line.product().name(), line.product().price(), line.quantity(), line.subtotal()));
+            bySeller.computeIfAbsent(old.seller(), seller -> new ArrayList<>())
+                    .add(new Order.Item(old.seller(), id, line.product().name(), line.product().price(), line.quantity(), line.subtotal()));
         }
-        Order order = new Order(UUID.randomUUID().toString(), session.username(), Instant.now(), items);
+        // 每个商家独立订单，但所有订单和库存只提交一次。
+        Instant time = Instant.now();
+        List<Order> created = new ArrayList<>();
+        for (List<Order.Item> items : bySeller.values()) {
+            created.add(new Order(UUID.randomUUID().toString(), session.username(), time, items));
+        }
         List<Order> updatedOrders = new ArrayList<>(orders);
-        updatedOrders.add(order);
+        updatedOrders.addAll(created);
         commit(updated, updatedOrders);
         cart.clear();
-        return order;
+        return List.copyOf(created);
     }
 
     // 勾选结账只移除已买商品，其余购物车项不变。保存失败不会修改原购物车。
-    public synchronized Order purchaseSelected(AuthService.Session session, Cart cart, List<String> ids, Checkout.Receipt accepted) {
+    public synchronized List<Order> purchaseSelected(AuthService.Session session, Cart cart, List<String> ids, Checkout.Receipt accepted) {
         Cart selected = cart.selected(session, ids);
         List<Cart.Line> bought = selected.lines();
-        Order order = purchase(session, selected, accepted);
+        List<Order> created = purchase(session, selected, accepted);
         for (Cart.Line line : bought) cart.removePurchased(line.product().id(), line.quantity());
-        return order;
+        return created;
     }
 
     private void commit(Map<String, Listing> updated, List<Order> updatedOrders) {

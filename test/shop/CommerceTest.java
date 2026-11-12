@@ -46,15 +46,16 @@ public final class CommerceTest {
             reject(() -> c.purchase(other, cart, quote), "他人的购物车");
             reject(() -> c.purchase(a, cart, quote), "权限");
             check(c.stock("P01") == 8 && c.purchases(buyer).isEmpty());
-            Order order = c.purchase(buyer, cart, quote);
+            List<Order> created = c.purchase(buyer, cart, quote);
+            BigDecimal combined = created.stream().map(Order::total).reduce(BigDecimal.ZERO, BigDecimal::add);
             check(cart.isEmpty());
             check(c.stock("P01") == 0 && c.stock("P02") == 1);
-            check(order.total().compareTo(quote.total()) == 0);
-            check(c.purchases(buyer).size() == 1 && c.purchases(other).isEmpty());
+            check(combined.compareTo(quote.total()) == 0);
+            check(c.purchases(buyer).size() == 2 && c.purchases(other).isEmpty());
             check(c.sales(a).size() == 1 && c.sales(a).get(0).items().size() == 1);
             check(c.sales(b).get(0).items().get(0).productId().equals("P02"));
-            check(c.sales(a).get(0).total().add(c.sales(b).get(0).total()).compareTo(order.total()) == 0);
-            for (Order.Item item : order.items()) check(item.paid().compareTo(item.subtotal()) == 0);
+            check(c.sales(a).get(0).total().add(c.sales(b).get(0).total()).compareTo(combined) == 0);
+            for (Order.Item item : created.stream().flatMap(order -> order.items().stream()).toList()) check(item.paid().compareTo(item.subtotal()) == 0);
             reject(() -> c.purchase(buyer, cart, quote), "empty");
             reject(() -> cart.add("P01", 1), "Sold out");
             check(cart.isEmpty());
@@ -73,7 +74,7 @@ public final class CommerceTest {
             check(legacyStore.purchases(buyer).get(0).total().compareTo(money("81.00")) == 0);
             check(legacyStore.sales(a).get(0).total().compareTo(money("81.00")) == 0);
             c.changePrice(b, "P02", money("25.00"));
-            check(c.purchases(buyer).get(0).items().get(1).unitPrice().compareTo(money("9.99")) == 0);
+            check(c.purchases(buyer).get(1).items().get(0).unitPrice().compareTo(money("9.99")) == 0);
 
             // 已加购后别的消费者买走库存，整次购买失败，其他商品也不能被部分扣库。
             c.changeStock(a, "P01", 1);

@@ -55,7 +55,7 @@ public final class CartStockTest {
                 Cart cart = carts.get(i);
                 cart.update("P01", 0);
                 check(cart.stockProblems().isEmpty() && cart.lines().size() == 1);
-                Order order = catalog.purchase(buyers.get(i), cart, checkout.quote(cart));
+                Order order = catalog.purchase(buyers.get(i), cart, checkout.quote(cart)).get(0);
                 check(order.total().compareTo(new BigDecimal("5.00")) == 0 && cart.isEmpty());
             }
             check(catalog.stock("P01") == 0 && catalog.stock("P02") == 5);

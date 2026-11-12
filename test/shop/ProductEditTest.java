@@ -37,7 +37,7 @@ public final class ProductEditTest {
             check(!cart.isEmpty() && catalog.stock(id) == 8);
             Cart purchase = new Cart(catalog, buyer);
             purchase.add(id, 2);
-            Order order = catalog.purchase(buyer, purchase, new Checkout().quote(purchase));
+            Order order = catalog.purchase(buyer, purchase, new Checkout().quote(purchase)).get(0);
             cart.removePurchased(id, 2);
             check(cart.lines().get(0).quantity() == 3 && catalog.stock(id) == 6);
             check(order.total().compareTo(new BigDecimal("24.00")) == 0);
