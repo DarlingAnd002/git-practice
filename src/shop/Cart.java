@@ -5,6 +5,7 @@ import java.util.LinkedHashMap;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Collection;
 
 /** 购物车，记录商品编号和购买数量。 */
 public class Cart {
@@ -52,6 +53,20 @@ public class Cart {
         quantities.put(id, total);
     }
 
+    public void addAll(Collection<String> ids, int quantity) {
+        validate(quantity);
+        Map<String, Integer> updated = new LinkedHashMap<>(quantities);
+        for (String id : new java.util.LinkedHashSet<>(ids)) {
+            catalog.find(id);
+            int total = updated.getOrDefault(id, 0) + quantity;
+            validate(total);
+            catalog.checkStock(id, total);
+            updated.put(id, total);
+        }
+        quantities.clear();
+        quantities.putAll(updated);
+    }
+
     // quantity 是新的总数量，设为 0 就删除商品。
     public void update(String id, int quantity) {
         if (!quantities.containsKey(id)) throw new IllegalArgumentException("Item is not in cart.");
@@ -61,6 +76,16 @@ public class Cart {
             catalog.checkStock(id, quantity);
             quantities.put(id, quantity);
         }
+    }
+
+    // 单独购买成功后只减去买走的数量，剩余项即使库存不足也保留。
+    void removePurchased(String id, int quantity) {
+        Integer current = quantities.get(id);
+        if (current == null || quantity < 1 || quantity > current) {
+            throw new IllegalArgumentException("购买数量超过购物车数量。");
+        }
+        if (quantity == current) quantities.remove(id);
+        else quantities.put(id, current - quantity);
     }
 
     private static void validate(int quantity) {
@@ -93,6 +118,21 @@ public class Cart {
             }
         }
         return List.copyOf(problems);
+    }
+
+    public Cart selected(AuthService.Session session, Collection<String> ids) {
+        if (session == null || !belongsTo(catalog, session.username())) {
+            throw new IllegalArgumentException("不能结算他人的购物车。");
+        }
+        session.require(Role.CONSUMER);
+        if (ids.isEmpty()) throw new IllegalArgumentException("请勾选要结算的商品。");
+        Cart result = new Cart(catalog, session);
+        for (String id : new java.util.LinkedHashSet<>(ids)) {
+            Integer quantity = quantities.get(id);
+            if (quantity == null) throw new IllegalArgumentException("商品不在购物车中：" + id);
+            result.add(id, quantity);
+        }
+        return result;
     }
 
     public BigDecimal subtotal() {

@@ -8,7 +8,9 @@ public final class Main {
         // Swing 组件在事件线程中创建。
         SwingUtilities.invokeLater(() -> {
             try {
-                UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());
+                UIManager.setLookAndFeel("javax.swing.plaf.nimbus.NimbusLookAndFeel");
+                UIManager.put("control", new java.awt.Color(246, 247, 249));
+                UIManager.put("nimbusFocus", new java.awt.Color(245, 164, 125));
                 AuthService auth = new AuthService(Path.of("data", "users.properties"));
                 Catalog catalog = new Catalog(Path.of("data", "store.properties"));
                 new ShopWindow(auth, catalog).setVisible(true);

@@ -59,6 +59,10 @@ public final class Catalog {
         return listing(id).product();
     }
 
+    public synchronized String seller(String id) {
+        return listing(id).seller();
+    }
+
     public synchronized int stock(String id) {
         return listing(id).stock();
     }
@@ -96,6 +100,16 @@ public final class Catalog {
         replace(new Listing(old.product(), old.seller(), old.stock(), false));
     }
 
+    public synchronized void setActive(AuthService.Session session, Collection<String> ids, boolean active) {
+        require(session, Role.SELLER);
+        Map<String, Listing> updated = new LinkedHashMap<>(listings);
+        for (String id : new LinkedHashSet<>(ids)) {
+            Listing old = owned(session, id);
+            updated.put(id, new Listing(old.product(), old.seller(), old.stock(), active));
+        }
+        commit(updated, orders);
+    }
+
     public synchronized void add(AuthService.Session session, Product product) {
         add(session, product, 99);
     }
@@ -111,6 +125,29 @@ public final class Catalog {
         // 商品归当前登录的销售者所有。
         updated.put(product.id(), new Listing(product, session.username(), stock));
         commit(updated, orders);
+    }
+
+    // 名称、价格和库存一次保存，校验失败时不修改任何字段。
+    public synchronized void updateProduct(AuthService.Session session, String id, String name, BigDecimal price, int stock) {
+        Listing old = owned(session, id);
+        Product product = editedProduct(id, name, price, stock);
+        replace(new Listing(product, old.seller(), stock, old.active()));
+    }
+
+    // 重新上架同时保存编辑内容，不能只改成功其中一部分。
+    public synchronized void relist(AuthService.Session session, String id, String name, BigDecimal price, int stock) {
+        Listing old = owned(session, id);
+        if (old.active()) throw new IllegalArgumentException("商品已在售。");
+        Product product = editedProduct(id, name, price, stock);
+        replace(new Listing(product, old.seller(), stock, true));
+    }
+
+    private Product editedProduct(String id, String name, BigDecimal price, int stock) {
+        validateStock(stock);
+        if (name == null || name.isBlank() || name.length() > 60 || name.chars().anyMatch(Character::isISOControl)) {
+            throw new IllegalArgumentException("商品名称不能为空，最多 60 字且不能包含控制字符。");
+        }
+        return new Product(id, name.trim(), price);
     }
 
     public synchronized void changePrice(AuthService.Session session, String id, BigDecimal price) {
@@ -196,6 +233,15 @@ public final class Catalog {
         updatedOrders.add(order);
         commit(updated, updatedOrders);
         cart.clear();
+        return order;
+    }
+
+    // 勾选结账只移除已买商品，其余购物车项不变。保存失败不会修改原购物车。
+    public synchronized Order purchaseSelected(AuthService.Session session, Cart cart, List<String> ids, Checkout.Receipt accepted) {
+        Cart selected = cart.selected(session, ids);
+        List<Cart.Line> bought = selected.lines();
+        Order order = purchase(session, selected, accepted);
+        for (Cart.Line line : bought) cart.removePurchased(line.product().id(), line.quantity());
         return order;
     }
 

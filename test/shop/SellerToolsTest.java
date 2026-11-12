@@ -56,6 +56,27 @@ public final class SellerToolsTest {
             Path legacy = dir.resolve("old-store.properties");
             try (var writer = Files.newBufferedWriter(legacy)) { old.store(writer, "Old fixture"); }
             check(new Catalog(legacy).isListed(first.id()));
+            reject(() -> loaded.relist(other, first.id(), "Bad", BigDecimal.ONE, 1));
+            reject(() -> loaded.relist(buyer, first.id(), "Bad", BigDecimal.ONE, 1));
+            reject(() -> loaded.relist(seller, first.id(), " ", BigDecimal.ONE, 1));
+            reject(() -> loaded.relist(seller, first.id(), "Changed", BigDecimal.ZERO, 1));
+            reject(() -> loaded.relist(seller, first.id(), "Changed", BigDecimal.ONE, -1));
+            check(!loaded.isListed(first.id()) && loaded.stock(first.id()) == 50);
+            loaded.relist(seller, first.id(), "New Pen", new BigDecimal("12.00"), 5);
+            check(loaded.isListed(first.id()) && loaded.find(first.id()).id().equals(first.id()));
+            check(loaded.find(first.id()).name().equals("New Pen") && loaded.stock(first.id()) == 5);
+            check(loaded.listings().stream().anyMatch(l -> l.product().id().equals(first.id())));
+            check(loaded.purchases(buyer).get(0).total().compareTo(new BigDecimal("10.00")) == 0);
+            Catalog afterRestart = new Catalog(file);
+            check(afterRestart.isListed(first.id()) && afterRestart.stock(first.id()) == 5);
+            Cart restoredCart = new Cart(afterRestart, buyer);
+            restoredCart.add(first.id(), 1);
+            check(new Checkout().quote(restoredCart).total().compareTo(new BigDecimal("12.00")) == 0);
+            reject(() -> afterRestart.relist(seller, first.id(), "Again", BigDecimal.ONE, 5));
+            afterRestart.takeDown(seller, first.id());
+            afterRestart.relist(seller, first.id(), "New Pen", new BigDecimal("12.00"), 0);
+            check(afterRestart.isListed(first.id()) && afterRestart.stock(first.id()) == 0);
+            reject(() -> restoredCart.add(first.id(), 1));
             System.out.println("PASS: " + checks + " auto-ID/take-down checks");
         } finally {
             try (var paths = Files.walk(dir)) {
