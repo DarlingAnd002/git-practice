@@ -26,6 +26,14 @@ try {
         & $runtime -cp build shop.CartStockTest
         if ($LASTEXITCODE -ne 0) { throw 'Cart stock tests failed.' }
         & $runtime -cp build shop.SellerToolsTest
+        if ($LASTEXITCODE -ne 0) { throw 'Seller tools tests failed.' }
+        & $runtime -cp build shop.NumberInputTest
+        if ($LASTEXITCODE -ne 0) { throw 'Number input tests failed.' }
+        & $runtime -cp build shop.ProductEditTest
+        if ($LASTEXITCODE -ne 0) { throw 'Product edit tests failed.' }
+        & $runtime -cp build shop.SelectionCheckoutTest
+        if ($LASTEXITCODE -ne 0) { throw 'Selection checkout tests failed.' }
+        & $runtime -cp build shop.CardActionsTest
     }
     else { & $runtime -cp build shop.Main }
     if ($LASTEXITCODE -ne 0) { throw 'Java program failed.' }
