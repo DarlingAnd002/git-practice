@@ -28,9 +28,10 @@ public final class AuthTest {
             check(buyer.role() == Role.CONSUMER);
             check(seller.username().equals("seller"));
             String stored = Files.readString(file);
-            check(!stored.contains("Password123"));
-            check(!stored.lines().filter(s -> s.startsWith("seller=")).findFirst().orElseThrow()
-                    .split("\\:")[1].equals(stored.lines().filter(s -> s.startsWith("buyer=")).findFirst().orElseThrow().split("\\:")[1]));
+            check(stored.contains("Password123"));
+            java.util.Properties saved = new java.util.Properties();
+            try (var reader = Files.newBufferedReader(file)) { saved.load(reader); }
+            check(saved.getProperty("seller").equals("SELLER:PLAIN:Password123"));
             Catalog catalog = new Catalog();
             Product product = new Product("P05", "Book", new BigDecimal("20.00"));
             rejects(() -> catalog.add(null, product));
@@ -49,6 +50,25 @@ public final class AuthTest {
             rejects(() -> catalog.changePrice(seller, "P05", BigDecimal.ONE));
             buyer.logout();
             rejects(() -> buyer.require(Role.CONSUMER));
+            byte[] salt = new byte[16];
+            javax.crypto.spec.PBEKeySpec key = new javax.crypto.spec.PBEKeySpec("LegacyPass123".toCharArray(), salt, 600_000, 256);
+            byte[] digest = javax.crypto.SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(key).getEncoded();
+            key.clearPassword();
+            java.util.Properties legacy = new java.util.Properties();
+            legacy.setProperty("olduser", "CONSUMER:" + java.util.Base64.getEncoder().encodeToString(salt)
+                    + ":" + java.util.Base64.getEncoder().encodeToString(digest));
+            Path oldFile = dir.resolve("legacy.properties");
+            try (var writer = Files.newBufferedWriter(oldFile)) { legacy.store(writer, "Legacy fixture"); }
+            AuthService migrated = new AuthService(oldFile);
+            rejects(() -> migrated.login("olduser", "wrong".toCharArray()));
+            check(!Files.readString(oldFile).contains("PLAIN"));
+            check(migrated.login("olduser", "LegacyPass123".toCharArray()).role() == Role.CONSUMER);
+            java.util.Properties converted = new java.util.Properties();
+            try (var reader = Files.newBufferedReader(oldFile)) { converted.load(reader); }
+            check(converted.getProperty("olduser").equals("CONSUMER:PLAIN:LegacyPass123"));
+            check(new AuthService(oldFile).login("olduser", "LegacyPass123".toCharArray()).role() == Role.CONSUMER);
+            auth.register("symbols", "  abc:def=中文  ".toCharArray(), Role.CONSUMER);
+            check(new AuthService(file).login("symbols", "  abc:def=中文  ".toCharArray()).role() == Role.CONSUMER);
             System.out.println("PASS: " + checks + " auth/role checks");
         } finally {
             try (var paths = Files.walk(dir)) {

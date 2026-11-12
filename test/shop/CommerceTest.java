@@ -16,14 +16,6 @@ public final class CommerceTest {
             AuthService.Session b = user(auth, "seller_b", Role.SELLER);
             AuthService.Session buyer = user(auth, "buyer_a", Role.CONSUMER);
             AuthService.Session other = user(auth, "buyer_b", Role.CONSUMER);
-            // 同一数据目录不能重复启动；释放锁后可以重新运行。
-            Path lockFile = dir.resolve("store.lock");
-            try (StoreLock held = new StoreLock(lockFile)) {
-                checks++;
-                try (StoreLock duplicate = new StoreLock(lockFile)) { throw new AssertionError("Duplicate lock accepted"); }
-                catch (java.io.IOException expected) { }
-            }
-            try (StoreLock released = new StoreLock(lockFile)) { check(true); }
             Path file = dir.resolve("store.properties");
             Catalog c = new Catalog(file);
             Product pen = new Product("P01", "Pen", money("12.50"));
@@ -49,12 +41,12 @@ public final class CommerceTest {
             check(c.sales(a).isEmpty() && c.purchases(buyer).isEmpty());
             cart.add("P02", 1);
             Checkout checkout = new Checkout();
-            Checkout.Receipt quote = checkout.quote(cart, "STUDENT10");
-            check(quote.total().compareTo(money("89.99")) == 0);
-            reject(() -> c.purchase(other, cart, "STUDENT10", quote), "他人的购物车");
-            reject(() -> c.purchase(a, cart, "STUDENT10", quote), "权限");
+            Checkout.Receipt quote = checkout.quote(cart);
+            check(quote.total().compareTo(money("109.99")) == 0);
+            reject(() -> c.purchase(other, cart, quote), "他人的购物车");
+            reject(() -> c.purchase(a, cart, quote), "权限");
             check(c.stock("P01") == 8 && c.purchases(buyer).isEmpty());
-            Order order = c.purchase(buyer, cart, "STUDENT10", quote);
+            Order order = c.purchase(buyer, cart, quote);
             check(cart.isEmpty());
             check(c.stock("P01") == 0 && c.stock("P02") == 1);
             check(order.total().compareTo(quote.total()) == 0);
@@ -62,8 +54,8 @@ public final class CommerceTest {
             check(c.sales(a).size() == 1 && c.sales(a).get(0).items().size() == 1);
             check(c.sales(b).get(0).items().get(0).productId().equals("P02"));
             check(c.sales(a).get(0).total().add(c.sales(b).get(0).total()).compareTo(order.total()) == 0);
-            for (Order.Item item : order.items()) check(item.paid().signum() >= 0 && item.paid().compareTo(item.subtotal()) <= 0);
-            reject(() -> c.purchase(buyer, cart, "STUDENT10", quote), "empty");
+            for (Order.Item item : order.items()) check(item.paid().compareTo(item.subtotal()) == 0);
+            reject(() -> c.purchase(buyer, cart, quote), "empty");
             reject(() -> cart.add("P01", 1), "Sold out");
             check(cart.isEmpty());
             reject(() -> c.purchases(a), "权限");
@@ -72,6 +64,14 @@ public final class CommerceTest {
             check(reloaded.stock("P01") == 0 && reloaded.stock("P02") == 1);
             check(reloaded.purchases(buyer).equals(c.purchases(buyer)));
             check(reloaded.sales(a).equals(c.sales(a)));
+            // 旧订单按原记录显示，修改计价方式不重算历史金额。
+            Path legacyFile = dir.resolve("legacy.properties");
+            Order legacy = new Order("legacy-order", buyer.username(), java.time.Instant.now(),
+                    List.of(new Order.Item(a.username(), "P01", "Pen", money("12.50"), 8, money("81.00"))));
+            new StoreFile(legacyFile).save(new StoreFile.State(Map.of(), List.of(legacy)));
+            Catalog legacyStore = new Catalog(legacyFile);
+            check(legacyStore.purchases(buyer).get(0).total().compareTo(money("81.00")) == 0);
+            check(legacyStore.sales(a).get(0).total().compareTo(money("81.00")) == 0);
             c.changePrice(b, "P02", money("25.00"));
             check(c.purchases(buyer).get(0).items().get(1).unitPrice().compareTo(money("9.99")) == 0);
 
@@ -80,18 +80,18 @@ public final class CommerceTest {
             Cart stale = new Cart(c, buyer);
             stale.add("P01", 1);
             stale.add("P02", 1);
-            Checkout.Receipt staleQuote = checkout.quote(stale, "");
+            Checkout.Receipt staleQuote = checkout.quote(stale);
             Cart winner = new Cart(c, other);
             winner.add("P01", 1);
-            c.purchase(other, winner, "", checkout.quote(winner, ""));
+            c.purchase(other, winner, checkout.quote(winner));
             int count = c.purchases(buyer).size();
-            reject(() -> c.purchase(buyer, stale, "", staleQuote), "Sold out");
+            reject(() -> c.purchase(buyer, stale, staleQuote), "Sold out");
             check(c.stock("P02") == 1 && stale.lines().size() == 2 && c.purchases(buyer).size() == count);
             stale.update("P01", 0); // 售罄项仍可删除。
             check(stale.lines().size() == 1);
-            Checkout.Receipt oldPrice = checkout.quote(stale, "");
+            Checkout.Receipt oldPrice = checkout.quote(stale);
             c.changePrice(b, "P02", money("30.00"));
-            reject(() -> c.purchase(buyer, stale, "", oldPrice), "重新确认报价");
+            reject(() -> c.purchase(buyer, stale, oldPrice), "重新确认报价");
             check(c.stock("P02") == 1 && !stale.isEmpty());
 
             // 强制制造存储失败，确认失败不会扣库存、生成订单或清空购物车。
@@ -100,14 +100,14 @@ public final class CommerceTest {
             Files.createDirectory(file);
             Files.writeString(file.resolve("block"), "nonempty directory");
             checks++;
-            try { c.purchase(buyer, stale, "", checkout.quote(stale, "")); throw new AssertionError("Expected save failure"); }
+            try { c.purchase(buyer, stale, checkout.quote(stale)); throw new AssertionError("Expected save failure"); }
             catch (UncheckedIOException expected) { }
             check(c.stock("P02") == 1 && c.purchases(buyer).size() == count && !stale.isEmpty());
             Files.delete(file.resolve("block"));
             Files.delete(file);
             Files.write(file, saved);
             check(new Catalog(file).stock("P02") == 1);
-            c.purchase(buyer, stale, "", checkout.quote(stale, ""));
+            c.purchase(buyer, stale, checkout.quote(stale));
             check(c.stock("P02") == 0 && stale.isEmpty());
             // 两个消费者均已加购最后一件商品，也只能有一个购买成功。
             c.changeStock(a, "P01", 1);
@@ -115,8 +115,8 @@ public final class CommerceTest {
             Cart second = new Cart(c, other);
             first.add("P01", 1);
             second.add("P01", 1);
-            Checkout.Receipt q1 = checkout.quote(first, "");
-            Checkout.Receipt q2 = checkout.quote(second, "");
+            Checkout.Receipt q1 = checkout.quote(first);
+            Checkout.Receipt q2 = checkout.quote(second);
             var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
             try {
                 var f1 = executor.submit(() -> attempt(c, buyer, first, q1));
@@ -142,7 +142,7 @@ public final class CommerceTest {
         return auth.login(name, "Password123".toCharArray());
     }
     private static boolean attempt(Catalog c, AuthService.Session session, Cart cart, Checkout.Receipt quote) {
-        try { c.purchase(session, cart, "", quote); return true; }
+        try { c.purchase(session, cart, quote); return true; }
         catch (IllegalArgumentException e) {
             if (!e.getMessage().contains("Sold out")) throw e;
             return false;

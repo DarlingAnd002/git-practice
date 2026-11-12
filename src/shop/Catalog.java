@@ -1,6 +1,6 @@
 package shop;
 
-import java.math.*;
+import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.io.*;
 import java.time.Instant;
@@ -9,7 +9,11 @@ import java.util.*;
 /** 管理商品、库存和订单。 */
 public final class Catalog {
     public static final int MAX_STOCK = 1_000_000;
-    public record Listing(Product product, String seller, int stock) { }
+    public record Listing(Product product, String seller, int stock, boolean active) {
+        public Listing(Product product, String seller, int stock) {
+            this(product, seller, stock, true);
+        }
+    }
     private Map<String, Listing> listings = new LinkedHashMap<>();
     private List<Order> orders = new ArrayList<>();
     private final StoreFile storage;
@@ -27,13 +31,17 @@ public final class Catalog {
     public synchronized List<Product> products() {
         List<Product> result = new ArrayList<>();
         for (Listing listing : listings.values()) {
-            result.add(listing.product());
+            if (listing.active()) result.add(listing.product());
         }
         return List.copyOf(result);
     }
 
     public synchronized List<Listing> listings() {
-        return List.copyOf(listings.values());
+        List<Listing> result = new ArrayList<>();
+        for (Listing listing : listings.values()) {
+            if (listing.active()) result.add(listing);
+        }
+        return List.copyOf(result);
     }
 
     public synchronized List<Listing> mine(AuthService.Session session) {
@@ -61,6 +69,33 @@ public final class Catalog {
         return value;
     }
 
+    public synchronized Product add(AuthService.Session session, String name, BigDecimal price, int stock) {
+        require(session, Role.SELLER);
+        // 从已有编号的最大值继续，下架商品仍保留编号。
+        long next = 1;
+        for (String id : listings.keySet()) {
+            if (id.matches("P[0-9]{1,11}")) {
+                next = Math.max(next, Long.parseLong(id.substring(1)) + 1);
+            }
+        }
+        if (next > 99_999_999_999L) throw new IllegalArgumentException("商品编号已用完。");
+        String id = String.format(Locale.ROOT, "P%03d", next);
+        Product product = new Product(id, name, price);
+        add(session, product, stock);
+        return product;
+    }
+
+    public synchronized boolean isListed(String id) {
+        return listing(id).active();
+    }
+
+    public synchronized void takeDown(AuthService.Session session, String id) {
+        Listing old = owned(session, id);
+        if (!old.active()) throw new IllegalArgumentException("商品已经下架。");
+        // 下架只改在售状态，库存和历史记录不删除。
+        replace(new Listing(old.product(), old.seller(), old.stock(), false));
+    }
+
     public synchronized void add(AuthService.Session session, Product product) {
         add(session, product, 99);
     }
@@ -80,13 +115,13 @@ public final class Catalog {
 
     public synchronized void changePrice(AuthService.Session session, String id, BigDecimal price) {
         Listing old = owned(session, id);
-        replace(new Listing(new Product(id, old.product().name(), price), old.seller(), old.stock()));
+        replace(new Listing(new Product(id, old.product().name(), price), old.seller(), old.stock(), old.active()));
     }
 
     public synchronized void changeStock(AuthService.Session session, String id, int stock) {
         Listing old = owned(session, id);
         validateStock(stock);
-        replace(new Listing(old.product(), old.seller(), stock));
+        replace(new Listing(old.product(), old.seller(), stock, old.active()));
     }
 
     private Listing owned(AuthService.Session session, String id) {
@@ -112,6 +147,7 @@ public final class Catalog {
     }
 
     public synchronized void checkStock(String id, int quantity) {
+        if (!isListed(id)) throw new IllegalArgumentException(id + " 已下架");
         int stock = stock(id);
         if (stock == 0) throw new IllegalArgumentException(id + " Sold out");
         if (quantity > stock) throw new IllegalArgumentException(id + " 库存不足，当前库存：" + stock);
@@ -140,26 +176,20 @@ public final class Catalog {
         return List.copyOf(result);
     }
 
-    public synchronized Order purchase(AuthService.Session session, Cart cart, String coupon, Checkout.Receipt accepted) {
+    public synchronized Order purchase(AuthService.Session session, Cart cart, Checkout.Receipt accepted) {
         require(session, Role.CONSUMER);
         if (!cart.belongsTo(this, session.username())) throw new IllegalArgumentException("不能结算他人的购物车。");
-        Checkout.Receipt current = new Checkout().quote(cart, coupon);
+        Checkout.Receipt current = new Checkout().quote(cart);
         if (!current.equals(accepted)) throw new IllegalArgumentException("商品价格或购物车已变化，请重新确认报价。");
         Map<String, Listing> updated = new LinkedHashMap<>(listings);
         List<Order.Item> items = new ArrayList<>();
-        BigDecimal cumulative = BigDecimal.ZERO;
-        BigDecimal allocated = new BigDecimal("0.00");
         for (Cart.Line line : current.lines()) {
             String id = line.product().id();
             checkStock(id, line.quantity());
             Listing old = listing(id);
-            updated.put(id, new Listing(old.product(), old.seller(), old.stock() - line.quantity()));
+            updated.put(id, new Listing(old.product(), old.seller(), old.stock() - line.quantity(), old.active()));
 
-            // 按原价比例分摊实付，累计计算可以避免分币舍入后对不上总额。
-            cumulative = cumulative.add(line.subtotal());
-            BigDecimal cumulativePaid = cumulative.multiply(current.total()).divide(current.subtotal(), 2, RoundingMode.DOWN);
-            items.add(new Order.Item(old.seller(), id, line.product().name(), line.product().price(), line.quantity(), cumulativePaid.subtract(allocated)));
-            allocated = cumulativePaid;
+            items.add(new Order.Item(old.seller(), id, line.product().name(), line.product().price(), line.quantity(), line.subtotal()));
         }
         Order order = new Order(UUID.randomUUID().toString(), session.username(), Instant.now(), items);
         List<Order> updatedOrders = new ArrayList<>(orders);

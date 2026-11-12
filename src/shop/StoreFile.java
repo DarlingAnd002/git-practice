@@ -1,95 +1,167 @@
 package shop;
 
-import java.io.*;
+import java.io.IOException;
+import java.io.Reader;
+import java.io.Writer;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.Instant;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 
-/** 读写商品和订单文件。 */
+/** 读取和保存商品、库存、订单。 */
 final class StoreFile {
     record State(Map<String, Catalog.Listing> listings, List<Order> orders) { }
+
     private final Path file;
+
     StoreFile(Path file) {
         this.file = file.toAbsolutePath();
     }
 
     State load() throws IOException {
-        if (!Files.exists(file)) return new State(Map.of(), List.of());
-        Properties properties = new Properties();
-        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) { properties.load(reader); }
-        try {
-            if (!get(properties, "version").equals("1")) throw new IllegalArgumentException("不支持的数据版本");
-            Map<String, Catalog.Listing> listings = new LinkedHashMap<>();
-            for (int index = 0; index < count(properties, "products"); index++) {
-                String prefix = "p." + index + ".";
-                Product product = new Product(get(properties, prefix + "id"), get(properties, prefix + "name"), decimal(properties, prefix + "price"));
-                int stock = Integer.parseInt(get(properties, prefix + "stock"));
-                Catalog.validateStock(stock);
-                if (listings.put(product.id(), new Catalog.Listing(product, get(properties, prefix + "seller"), stock)) != null)
-                    throw new IllegalArgumentException("重复商品编号");
-            }
-            List<Order> orders = new ArrayList<>();
-            for (int index = 0; index < count(properties, "orders"); index++) {
-                String prefix = "o." + index + ".";
-                List<Order.Item> items = new ArrayList<>();
-                for (int itemIndex = 0; itemIndex < count(properties, prefix + "items"); itemIndex++) {
-                    String itemPrefix = prefix + "i." + itemIndex + ".";
-                    items.add(new Order.Item(get(properties, itemPrefix + "seller"), get(properties, itemPrefix + "id"), get(properties, itemPrefix + "name"),
-                            decimal(properties, itemPrefix + "price"), Integer.parseInt(get(properties, itemPrefix + "quantity")), decimal(properties, itemPrefix + "paid")));
-                }
-                orders.add(new Order(get(properties, prefix + "id"), get(properties, prefix + "buyer"), Instant.parse(get(properties, prefix + "time")), items));
-            }
+        Map<String, Catalog.Listing> listings = new LinkedHashMap<>();
+        List<Order> orders = new ArrayList<>();
+        if (!Files.exists(file)) {
             return new State(listings, orders);
-        } catch (RuntimeException e) { throw new IOException("商店数据格式错误，未覆盖原文件。", e); }
-    }
+        }
 
-    private static String get(Properties properties, String key) {
-        String value = properties.getProperty(key);
-        if (value == null) throw new IllegalArgumentException("缺少字段：" + key);
-        return value;
-    }
+        Properties data = new Properties();
+        try (Reader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
+            data.load(reader);
+        } catch (IllegalArgumentException e) {
+            throw new IOException("商店文件格式错误。", e);
+        }
 
-    private static BigDecimal decimal(Properties properties, String key) {
-        return new BigDecimal(get(properties, key));
-    }
+        try {
+            if (!readField(data, "version").equals("1")) {
+                throw new IllegalArgumentException("不支持的数据版本。");
+            }
 
-    private static int count(Properties properties, String key) {
-        int index = Integer.parseInt(get(properties, key));
-        if (index < 0 || index > 100_000) throw new IllegalArgumentException("数据数量错误");
-        return index;
+            // p.0.id、p.0.name 等字段属于第一个商品，p.1 属于第二个。
+            int productCount = readCount(data, "products");
+            for (int index = 0; index < productCount; index++) {
+                String prefix = "p." + index + ".";
+                String id = readField(data, prefix + "id");
+                String name = readField(data, prefix + "name");
+                BigDecimal price = new BigDecimal(readField(data, prefix + "price"));
+                String seller = readField(data, prefix + "seller");
+                int stock = Integer.parseInt(readField(data, prefix + "stock"));
+
+                Catalog.validateStock(stock);
+                if (listings.containsKey(id)) {
+                    throw new IllegalArgumentException("重复商品编号：" + id);
+                }
+                Product product = new Product(id, name, price);
+                // 旧文件没有 active 字段时，原商品仍视为在售。
+                boolean active = Boolean.parseBoolean(data.getProperty(prefix + "active", "true"));
+                Catalog.Listing listing = new Catalog.Listing(product, seller, stock, active);
+                listings.put(id, listing);
+            }
+
+            // 每个订单下面还有商品明细，例如 o.0.i.0 是第一笔订单的第一项。
+            int orderCount = readCount(data, "orders");
+            for (int index = 0; index < orderCount; index++) {
+                String prefix = "o." + index + ".";
+                String orderId = readField(data, prefix + "id");
+                String buyer = readField(data, prefix + "buyer");
+                Instant time = Instant.parse(readField(data, prefix + "time"));
+                int itemCount = readCount(data, prefix + "items");
+                List<Order.Item> items = new ArrayList<>();
+
+                for (int itemIndex = 0; itemIndex < itemCount; itemIndex++) {
+                    String itemPrefix = prefix + "i." + itemIndex + ".";
+                    String seller = readField(data, itemPrefix + "seller");
+                    String productId = readField(data, itemPrefix + "id");
+                    String name = readField(data, itemPrefix + "name");
+                    BigDecimal price = new BigDecimal(readField(data, itemPrefix + "price"));
+                    int quantity = Integer.parseInt(readField(data, itemPrefix + "quantity"));
+                    BigDecimal paid = new BigDecimal(readField(data, itemPrefix + "paid"));
+
+                    Order.Item item = new Order.Item(seller, productId, name, price, quantity, paid);
+                    items.add(item);
+                }
+
+                Order order = new Order(orderId, buyer, time, items);
+                orders.add(order);
+            }
+        } catch (RuntimeException e) {
+            throw new IOException("商店数据有误，原文件没有修改。", e);
+        }
+        return new State(listings, orders);
     }
 
     void save(State state) throws IOException {
-        Properties properties = new Properties();
-        properties.setProperty("version", "1");
-        properties.setProperty("products", "" + state.listings().size());
-        int index = 0;
+        Properties data = new Properties();
+        data.setProperty("version", "1");
+        data.setProperty("products", String.valueOf(state.listings().size()));
+        data.setProperty("orders", String.valueOf(state.orders().size()));
+
+        int productIndex = 0;
         for (Catalog.Listing listing : state.listings().values()) {
-            String prefix = "p." + index++ + ".";
-            put(properties, prefix, "id", listing.product().id(), "name", listing.product().name(), "price", listing.product().price().toPlainString(), "seller", listing.seller(), "stock", "" + listing.stock());
+            Product product = listing.product();
+            String prefix = "p." + productIndex + ".";
+            data.setProperty(prefix + "id", product.id());
+            data.setProperty(prefix + "name", product.name());
+            data.setProperty(prefix + "price", product.price().toPlainString());
+            data.setProperty(prefix + "seller", listing.seller());
+            data.setProperty(prefix + "stock", String.valueOf(listing.stock()));
+            data.setProperty(prefix + "active", String.valueOf(listing.active()));
+            productIndex++;
         }
-        properties.setProperty("orders", "" + state.orders().size());
-        for (int i = 0; i < state.orders().size(); i++) {
-            Order order = state.orders().get(i);
-            String prefix = "o." + i + ".";
-            put(properties, prefix, "id", order.id(), "buyer", order.buyer(), "time", order.createdAt().toString(), "items", "" + order.items().size());
+
+        for (int index = 0; index < state.orders().size(); index++) {
+            Order order = state.orders().get(index);
+            String prefix = "o." + index + ".";
+            data.setProperty(prefix + "id", order.id());
+            data.setProperty(prefix + "buyer", order.buyer());
+            data.setProperty(prefix + "time", order.createdAt().toString());
+            data.setProperty(prefix + "items", String.valueOf(order.items().size()));
+
             for (int itemIndex = 0; itemIndex < order.items().size(); itemIndex++) {
                 Order.Item item = order.items().get(itemIndex);
-                put(properties, prefix + "i." + itemIndex + ".", "seller", item.seller(), "id", item.productId(), "name", item.name(), "price", item.unitPrice().toPlainString(), "quantity", "" + item.quantity(), "paid", item.paid().toPlainString());
+                String itemPrefix = prefix + "i." + itemIndex + ".";
+                data.setProperty(itemPrefix + "seller", item.seller());
+                data.setProperty(itemPrefix + "id", item.productId());
+                data.setProperty(itemPrefix + "name", item.name());
+                data.setProperty(itemPrefix + "price", item.unitPrice().toPlainString());
+                data.setProperty(itemPrefix + "quantity", String.valueOf(item.quantity()));
+                data.setProperty(itemPrefix + "paid", item.paid().toPlainString());
             }
         }
-        // 库存和订单一起保存，不能只写成功其中一部分。
+
+        // 先写临时文件，写完才替换旧文件，避免保存失败时丢掉原数据。
         Files.createDirectories(file.getParent());
         Path temp = Files.createTempFile(file.getParent(), "store-", ".tmp");
         try {
-            try (Writer writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) { properties.store(writer, "Shopping inventory and orders"); }
+            try (Writer writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
+                data.store(writer, "Shopping inventory and orders");
+            }
             Files.move(temp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } finally { Files.deleteIfExists(temp); }
+        } finally {
+            Files.deleteIfExists(temp);
+        }
     }
 
-    private static void put(Properties properties, String prefix, String... pairs) {
-        for (int i = 0; i < pairs.length; i += 2) properties.setProperty(prefix + pairs[i], pairs[i + 1]);
+    private String readField(Properties data, String key) {
+        String value = data.getProperty(key);
+        if (value == null) {
+            throw new IllegalArgumentException("缺少字段：" + key);
+        }
+        return value;
+    }
+
+    private int readCount(Properties data, String key) {
+        int count = Integer.parseInt(readField(data, key));
+        if (count < 0 || count > 100_000) {
+            throw new IllegalArgumentException("数据数量错误：" + key);
+        }
+        return count;
     }
 }

@@ -19,24 +19,24 @@ public final class ShopTest {
         java.nio.file.Files.delete(dir);
         Cart cart = new Cart(catalog);
         Checkout checkout = new Checkout();
-        rejects(() -> checkout.quote(cart, ""));
+        rejects(() -> checkout.quote(cart));
         rejects(() -> cart.add("missing", 1));
         rejects(() -> cart.add("P01", -1));
         rejects(() -> cart.add("P01", 0));
         rejects(() -> cart.add("P01", Integer.MAX_VALUE));
         cart.add("P02", 8); // Exactly 100
         money("100.00", cart.subtotal());
-        Checkout.Receipt receipt = checkout.quote(cart, "STUDENT10");
-        money("10.00", receipt.thresholdDiscount());
-        money("9.00", receipt.couponDiscount());
-        money("81.00", receipt.total());
-        money("90.00", checkout.quote(cart, "").total());
-        rejects(() -> checkout.quote(cart, "INVALID"));
-        money("100.00", cart.subtotal()); // Quoting does not clear the cart
+        Checkout.Receipt receipt = checkout.quote(cart);
+        money("100.00", receipt.total());
+        money("100.00", cart.subtotal()); // 报价不会修改购物车
         cart.update("P02", 7);
-        money("0.00", checkout.quote(cart, "").thresholdDiscount());
+        money("87.50", checkout.quote(cart).total());
+        cart.update("P02", 9);
+        money("112.50", checkout.quote(cart).total());
+        cart.update("P02", 16);
+        money("200.00", checkout.quote(cart).total());
         cart.update("P02", 1);
-        money("11.25", checkout.quote(cart, "STUDENT10").total());
+        money("12.50", checkout.quote(cart).total());
         cart.add("P02", 98);
         rejects(() -> cart.add("P02", 1));
         money("1237.50", cart.subtotal());
@@ -46,7 +46,7 @@ public final class ShopTest {
         cart.add("P01", 1);
         cart.clear();
         money("0.00", cart.subtotal());
-        money("81.00", receipt.total()); // Receipt remains a snapshot
+        money("100.00", receipt.total()); // Receipt remains a snapshot
         cart.add("P02", 1);
         cart.add("P01", 1);
         money("30.50", cart.subtotal());

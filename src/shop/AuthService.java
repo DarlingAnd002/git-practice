@@ -49,11 +49,11 @@ public final class AuthService {
             throw new IllegalArgumentException("密码长度必须为 8–128 个字符。");
         if (role == null) throw new IllegalArgumentException("请选择角色。");
         if (accounts.containsKey(username)) throw new IllegalArgumentException("账号已存在。");
-        // 相同密码也使用不同的盐，不直接保存密码。
-        byte[] salt = new byte[16];
-        new SecureRandom().nextBytes(salt);
-        String entry = role.name() + ":" + Base64.getEncoder().encodeToString(salt)
-                + ":" + Base64.getEncoder().encodeToString(hash(password, salt));
+        String entry = role.name() + ":PLAIN:" + new String(password);
+        save(username, entry);
+    }
+
+    private void save(String username, String entry) throws IOException {
         Properties updated = new Properties();
         updated.putAll(accounts);
         updated.setProperty(username, entry);
@@ -61,7 +61,7 @@ public final class AuthService {
         Path temp = Files.createTempFile(file.getParent(), "users-", ".tmp");
         try {
             try (Writer writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
-                updated.store(writer, "Local classroom accounts: role, salt, PBKDF2 hash");
+                updated.store(writer, "Accounts: role, PLAIN, password");
             }
 
             // 写好临时文件后再替换，防止写到一半把旧数据弄坏。
@@ -70,18 +70,41 @@ public final class AuthService {
         } finally { Files.deleteIfExists(temp); }
     }
 
-    public Session login(String username, char[] password) {
+    public Session login(String username, char[] password) throws IOException {
         username = normalize(username);
-        if (password == null || password.length > 128) throw new IllegalArgumentException("账号或密码错误。");
-        String entry = accounts.getProperty(username);
-        String[] fields = entry == null ? null : entry.split(":");
-
-        // 账号不存在时也算一次摘要，不在提示中区分账号和密码错误。
-        byte[] salt = fields == null ? new byte[16] : Base64.getDecoder().decode(fields[1]);
-        byte[] actual = hash(password, salt);
-        if (fields == null || !MessageDigest.isEqual(actual, Base64.getDecoder().decode(fields[2])))
+        if (password == null || password.length > 128) {
             throw new IllegalArgumentException("账号或密码错误。");
+        }
+        String entry = accounts.getProperty(username);
+        if (entry == null) {
+            throw new IllegalArgumentException("账号或密码错误。");
+        }
+        String[] fields = entry.split(":", 3);
+        if (fields.length != 3) {
+            throw new IllegalArgumentException("账号记录格式错误。");
+        }
+        String enteredPassword = new String(password);
+        if (fields[1].equals("PLAIN")) {
+            if (!fields[2].equals(enteredPassword)) {
+                throw new IllegalArgumentException("账号或密码错误。");
+            }
+        } else {
+            // 只兼容以前的账号，验证成功后改存明文。新注册不会走这段。
+            if (!matchesOldPassword(password, fields[1], fields[2])) {
+                throw new IllegalArgumentException("账号或密码错误。");
+            }
+            save(username, fields[0] + ":PLAIN:" + enteredPassword);
+        }
         return new Session(username, Role.valueOf(fields[0]));
+    }
+
+    private static boolean matchesOldPassword(char[] password, String salt, String expected) {
+        try {
+            byte[] actual = hash(password, Base64.getDecoder().decode(salt));
+            return MessageDigest.isEqual(actual, Base64.getDecoder().decode(expected));
+        } catch (IllegalArgumentException e) {
+            return false;
+        }
     }
 
     private static String normalize(String username) {

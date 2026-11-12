@@ -77,6 +77,24 @@ public class Cart {
         return List.copyOf(result);
     }
 
+    // 每次查看都查当前库存，不删除购物车里的商品。
+    public List<String> stockProblems() {
+        List<String> problems = new ArrayList<>();
+        for (Line line : lines()) {
+            String id = line.product().id();
+            int stock = catalog.stock(id);
+            if (!catalog.isListed(id)) {
+                problems.add(id + " " + line.product().name() + " 已下架");
+            } else if (stock == 0) {
+                problems.add(id + " " + line.product().name() + " Sold out");
+            } else if (line.quantity() > stock) {
+                problems.add(id + " " + line.product().name() + " 库存不足，购物车数量："
+                        + line.quantity() + "，当前库存：" + stock);
+            }
+        }
+        return List.copyOf(problems);
+    }
+
     public BigDecimal subtotal() {
         BigDecimal total = new BigDecimal("0.00");
         for (Line line : lines()) {
